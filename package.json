@@ -1,10 +1,10 @@
 {
   "name": "dself",
   "version": "1.0.0",
-  "main": "self.js",
+  "main": "play-tv.js",
   "type": "module",
   "scripts": {
-    "start": "node --env-file=.env self.js",
+    "start": "node --env-file=.env play-tv.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
