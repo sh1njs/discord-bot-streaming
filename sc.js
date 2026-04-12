@@ -79,8 +79,7 @@ async function main() {
     const title = sanitizeFilename(res.info.title)
     const ext = res.info.extension.toLowerCase()
 
-    const folder = path.join(process.cwd(), "file")
-    const filepath = path.join(folder, `${title}.${ext}`)
+    const filepath = path.join(process.cwd(), `video.${ext}`)
 
     console.log("📥 Download:", title)
 

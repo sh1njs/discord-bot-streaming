@@ -1,10 +1,10 @@
 {
   "name": "dself",
   "version": "1.0.0",
-  "main": "play-tv.js",
+  "main": "play.js",
   "type": "module",
   "scripts": {
-    "start": "node --env-file=.env play-tv.js",
+    "start": "node --env-file=.env play.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -14,6 +14,7 @@
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "@dank074/discord-video-stream": "*",
-    "discord.js-selfbot-v13": "^3.7.1"
+    "discord.js-selfbot-v13": "^3.7.1",
+    "readline": "*"
   }
 }
