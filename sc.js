@@ -65,10 +65,13 @@ function sanitizeFilename(name) {
 }
 
 async function main() {
+
     const url = process.argv[2]
+    const customNameArg = process.argv[3]
 
     if (!url) {
-        console.log("Usage: node sc.js <youtube_link>")
+        console.log("Usage:")
+        console.log("node sc.js <youtube_url> --namafile")
         process.exit(1)
     }
 
@@ -76,12 +79,25 @@ async function main() {
 
     const res = await ytdown(url)
 
-    const title = sanitizeFilename(res.info.title)
     const ext = res.info.extension.toLowerCase()
 
-    const filepath = path.join(process.cwd(), `video.${ext}`)
+    let filename
 
-    console.log("📥 Download:", title)
+    if (customNameArg && customNameArg.startsWith("--")) {
+        filename = sanitizeFilename(customNameArg.replace("--", ""))
+    } else {
+        filename = sanitizeFilename(res.info.title)
+    }
+
+    const assetsDir = path.join(process.cwd(), "assets")
+
+    if (!fs.existsSync(assetsDir)) {
+        fs.mkdirSync(assetsDir)
+    }
+
+    const filepath = path.join(assetsDir, `${filename}.${ext}`)
+
+    console.log("📥 Download:", filename)
 
     const response = await axios.get(res.download, {
         responseType: "stream"
