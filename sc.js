@@ -89,7 +89,7 @@ async function main() {
         filename = sanitizeFilename(res.info.title)
     }
 
-    const assetsDir = path.join(process.cwd(), "assets")
+    const assetsDir = path.join(process.cwd(), "movie")
 
     if (!fs.existsSync(assetsDir)) {
         fs.mkdirSync(assetsDir)

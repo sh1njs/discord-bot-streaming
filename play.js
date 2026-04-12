@@ -7,14 +7,12 @@ import {
 	Encoders,
 } from "@dank074/discord-video-stream";
 import fs from "fs";
+import path from "path";
 import readline from "readline";
 
 /**
- * Stream quality presets for video streaming
- *
- * Each preset defines resolution, framerate, and bitrate settings
- *
- * @constant {Object}
+ * Stream quality presets.
+ * Defines resolution, FPS, and video bitrate.
  */
 const STREAM_PRESETS = {
 	"1080p60": { width: 1920, height: 1080, frameRate: 60, bitrateVideo: 4000 },
@@ -25,28 +23,27 @@ const STREAM_PRESETS = {
 	"auto": { width: 1920, height: 1080, frameRate: 30, bitrateVideo: 2500 },
 };
 
+const MOVIE_DIR = "movie";
+const LOADING_VID = "assets/loading.mp4";
+const BOOT_VID = "video.mp4";
+
 /**
- * Main bot class for tracking voice channel activity and streaming video content
- *
- * Monitors user join/leave times in a specific voice channel and streams video
+ * Discord voice streaming bot with console controller.
  */
 class VoiceTrackerBot {
 	/**
-	 * Creates a new VoiceTrackerBot instance
-	 *
-	 * @param {Object} config - Configuration object
-	 * @param {string} config.token - Discord user token for authentication
-	 * @param {string} config.guildId - ID of the Discord guild/server
-	 * @param {string} config.voiceChannelId - ID of the voice channel to monitor
-	 * @param {string} config.textChannelId - ID of the text channel for logging
-	 * @param {string} [config.quality="smooth"] - Stream quality preset key from STREAM_PRESETS
+	 * @param {Object} options
+	 * @param {string} options.token
+	 * @param {string} options.guildId
+	 * @param {string} options.voiceChannelId
+	 * @param {string} options.textChannelId
+	 * @param {string} [options.quality]
 	 */
 	constructor({ token, guildId, voiceChannelId, textChannelId, quality = "smooth" }) {
 		this.token = token;
 		this.guildId = guildId;
 		this.voiceChannelId = voiceChannelId;
 		this.textChannelId = textChannelId;
-
 		this.quality = quality;
 
 		this.client = new Client();
@@ -56,12 +53,10 @@ class VoiceTrackerBot {
 		this.isShuttingDown = false;
 		this.currentStreamCommand = null;
 
-		this.mode = "loading"; // loading | video
+		this.queuedVideo = null;
+		this.resolveVideoFinished = null;
 
-		this.rl = readline.createInterface({
-			input: process.stdin,
-			output: process.stdout,
-		});
+		this.rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 		this.registerConsoleCommands();
 		this.registerEvents();
@@ -69,31 +64,82 @@ class VoiceTrackerBot {
 	}
 
 	/**
-	 * Console command handler
+	 * Get list of available movies.
+	 * @returns {string[]}
+	 */
+	getMovieList() {
+		if (!fs.existsSync(MOVIE_DIR)) return [];
+		return fs.readdirSync(MOVIE_DIR).filter((f) => f.toLowerCase().endsWith(".mp4")).sort();
+	}
+
+	/**
+	 * Ask question in console.
+	 * @param {string} q
+	 * @returns {Promise<string>}
+	 */
+	askQuestion(q) {
+		return new Promise((res) => this.rl.question(q, res));
+	}
+
+	/**
+	 * Register console input commands.
 	 */
 	registerConsoleCommands() {
 		this.rl.on("line", async (input) => {
 			const cmd = input.trim().toLowerCase();
 
 			if (cmd === "start") {
-				console.log("[CONSOLE] Start video requested");
-				this.mode = "video";
-				await this.restartStream();
+				await this.handleStartCommand();
 			}
 
 			if (cmd === "stop") {
-				console.log("[CONSOLE] Stop video -> back to loading");
-				this.mode = "loading";
-				await this.restartStream();
+				console.log("[CONSOLE] Stop → back to loading");
+				this.queuedVideo = null;
+				await this.killCurrentStream();
 			}
 		});
 	}
 
+	/**
+	 * Handle start command from console.
+	 */
+	async handleStartCommand() {
+		const movies = this.getMovieList();
+
+		if (movies.length === 0) {
+			console.log("[START] Folder movie/ kosong atau tidak ditemukan.");
+			return;
+		}
+
+		console.log("\n[START] Film tersedia:");
+		movies.forEach((m, i) => console.log(`  ${i + 1}. ${m}`));
+
+		const answer = await this.askQuestion("Pilih nomor film: ");
+		const idx = parseInt(answer.trim(), 10) - 1;
+
+		if (isNaN(idx) || idx < 0 || idx >= movies.length) {
+			console.log("[START] Nomor tidak valid.");
+			return;
+		}
+
+		const chosen = path.join(MOVIE_DIR, movies[idx]);
+		console.log(`[START] Queued: ${chosen}`);
+
+		this.queuedVideo = chosen;
+		await this.killCurrentStream();
+	}
+
+	/**
+	 * Register Discord events.
+	 */
 	registerEvents() {
 		this.client.on("ready", this.handleReady.bind(this));
 		this.client.on("voiceStateUpdate", this.handleVoiceStateUpdate.bind(this));
 	}
 
+	/**
+	 * Register process signals.
+	 */
 	registerProcessEvents() {
 		const shutdown = async () => {
 			if (this.isShuttingDown) return;
@@ -102,19 +148,12 @@ class VoiceTrackerBot {
 			console.log("Shutting down...");
 
 			try {
-				if (this.currentStreamCommand) {
-					this.currentStreamCommand.kill("SIGKILL");
-				}
-
+				this.killCurrentStream();
 				this.rl.close();
-
-				if (this.streamer.client.voice) {
-					this.streamer.leaveVoice();
-				}
-
+				if (this.streamer.client.voice) this.streamer.leaveVoice();
 				await this.client.destroy();
-			} catch (error) {
-				console.error("Shutdown error:", error);
+			} catch (e) {
+				console.error("Shutdown error:", e);
 			} finally {
 				process.exit(0);
 			}
@@ -124,20 +163,16 @@ class VoiceTrackerBot {
 		process.once("SIGTERM", shutdown);
 	}
 
+	/**
+	 * Called when bot is ready.
+	 */
 	async handleReady() {
 		console.log(`Logged in as ${this.client.user.tag}`);
 
 		this.client.user.setPresence({
-			activities: [{ name: "⊹ ࣪ ˖ loading system <3", type: "PLAYING" }],
+			activities: [{ name: "⊹ ࣪ ˖ ashinaa 𓂃𓈒𓏸", type: "PLAYING" }],
 			status: "online",
 		});
-
-		const videoExists = fs.existsSync("video.mp4");
-
-		if (!videoExists) {
-			console.log("[BOOT] video.mp4 not found, forcing loading mode");
-			this.mode = "loading";
-		}
 
 		try {
 			const guild = this.getGuild();
@@ -156,86 +191,127 @@ class VoiceTrackerBot {
 	}
 
 	/**
-	 * restart stream manually (console trigger)
+	 * Kill current ffmpeg stream process.
 	 */
-	async restartStream() {
+	killCurrentStream() {
 		if (this.currentStreamCommand) {
-			this.currentStreamCommand.kill("SIGKILL");
+			try {
+				this.currentStreamCommand.kill("SIGKILL");
+			} catch (_) {}
+			this.currentStreamCommand = null;
 		}
-		await this.startStreamLoop();
 	}
 
 	/**
-	 * core streaming loop controller
+	 * Play a video once.
+	 * @param {string} filePath
+	 */
+	async playOnce(filePath) {
+		const streamOpts = STREAM_PRESETS[this.quality] || STREAM_PRESETS.smooth;
+
+		const { command, output } = prepareStream(filePath, {
+			...streamOpts,
+			videoCodec: Utils.normalizeVideoCodec("H264"),
+			encoder: Encoders.software({
+				x264: { preset: "veryfast", tune: "zerolatency" },
+			}),
+			customFfmpegFlags: [
+				"-threads",
+				"4",
+				"-minrate",
+				`${streamOpts.bitrateVideo}k`,
+				"-bufsize",
+				`${streamOpts.bitrateVideo}k`,
+			],
+		});
+
+		this.currentStreamCommand = command;
+
+		try {
+			await playStream(output, this.streamer, { type: "go-live" });
+		} catch (err) {
+			console.error(`[STREAM ERROR] ${err.message}`);
+		} finally {
+			this.currentStreamCommand = null;
+		}
+	}
+
+	/**
+	 * Play loading loop video.
+	 */
+	async playLoadingLoop() {
+		const streamOpts = STREAM_PRESETS[this.quality] || STREAM_PRESETS.smooth;
+
+		const { command, output } = prepareStream(LOADING_VID, {
+			...streamOpts,
+			videoCodec: Utils.normalizeVideoCodec("H264"),
+			encoder: Encoders.software({
+				x264: { preset: "veryfast", tune: "zerolatency" },
+			}),
+			customInputOptions: ["-stream_loop", "-1"],
+			customFfmpegFlags: [
+				"-threads",
+				"4",
+				"-minrate",
+				`${streamOpts.bitrateVideo}k`,
+				"-bufsize",
+				`${streamOpts.bitrateVideo}k`,
+			],
+		});
+
+		this.currentStreamCommand = command;
+
+		try {
+			await playStream(output, this.streamer, { type: "go-live" });
+		} catch (err) {
+			if (!this.isShuttingDown) {
+				console.log("[LOADING] Stream interrupted (switching video)");
+			}
+		} finally {
+			this.currentStreamCommand = null;
+		}
+	}
+
+	/**
+	 * Main streaming loop.
 	 */
 	async startStreamLoop() {
 		while (!this.isShuttingDown) {
-			const file =
-				this.mode === "video" && fs.existsSync("video.mp4")
-					? "video.mp4"
-					: "assets/loading.mp4";
+			if (this.queuedVideo) {
+				const videoToPlay = this.queuedVideo;
+				this.queuedVideo = null;
 
-			const isLoading = file.includes("loading");
+				console.log(`[STREAM] Playing movie: ${videoToPlay}`);
+				await this.playOnce(videoToPlay);
+				console.log("[STREAM] Movie selesai → kembali ke loading loop");
+			} else {
+				console.log("[STREAM] Loading loop ...");
+				await this.playLoadingLoop();
+			}
 
-			console.log(`[STREAM] Playing: ${file}`);
-
-			const streamOpts = STREAM_PRESETS[this.quality] || STREAM_PRESETS.smooth;
-
-			const { command, output } = prepareStream(file, {
-				...streamOpts,
-				videoCodec: Utils.normalizeVideoCodec("H264"),
-				encoder: Encoders.software({
-					x264: { preset: "veryfast", tune: "zerolatency" },
-				}),
-				customInputOptions: isLoading
-					? ["-stream_loop", "-1"]
-					: [],
-				customFfmpegFlags: [
-					"-threads",
-					"4",
-					"-minrate",
-					`${streamOpts.bitrateVideo}k`,
-					"-bufsize",
-					`${streamOpts.bitrateVideo}k`,
-				],
-			});
-
-			this.currentStreamCommand = command;
-
-			try {
-				await playStream(output, this.streamer, { type: "go-live" });
-
-				console.log("[STREAM] finished");
-
-				// kalau video selesai -> balik ke loading
-				if (!isLoading) {
-					this.mode = "loading";
-				}
-			} catch (err) {
-				console.error("[STREAM ERROR]", err.message);
-				await new Promise((r) => setTimeout(r, 3000));
+			if (!this.isShuttingDown) {
+				await new Promise((r) => setTimeout(r, 500));
 			}
 		}
 	}
 
+	/**
+	 * Handle voice state updates.
+	 */
 	handleVoiceStateUpdate(oldState, newState) {
 		if (!this.isTargetGuild(oldState, newState)) return;
 
 		const userId = newState.id || oldState.id;
 		if (userId === this.client.user.id) return;
 
-		const joined = newState.channelId === this.voiceChannelId;
-		const left = oldState.channelId === this.voiceChannelId;
-
-		if (joined) {
+		if (newState.channelId === this.voiceChannelId) {
 			this.userJoinTimes.set(userId, Date.now());
-			console.log(`[TRACK] user joined`);
+			console.log("[TRACK] user joined");
 		}
 
-		if (left) {
+		if (oldState.channelId === this.voiceChannelId) {
 			const t = this.userJoinTimes.get(userId);
 			if (!t) return;
-
 			console.log(`[TRACK] user left after ${Date.now() - t}ms`);
 			this.userJoinTimes.delete(userId);
 		}
@@ -259,6 +335,9 @@ class VoiceTrackerBot {
 		if (!this.voiceChannelId) throw new Error("Missing voice channel ID.");
 	}
 
+	/**
+	 * Start bot.
+	 */
 	async start() {
 		try {
 			this.validateConfig();
@@ -269,9 +348,6 @@ class VoiceTrackerBot {
 	}
 }
 
-/**
- * Bot instance configuration using environment variables
- */
 const bot = new VoiceTrackerBot({
 	token: process.env.USER_TOKEN,
 	guildId: process.env.GUILD_ID,
