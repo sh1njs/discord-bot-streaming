@@ -1,0 +1,19 @@
+{
+  "name": "dself",
+  "version": "1.0.0",
+  "main": "self.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env self.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@dank074/discord-video-stream": "*",
+    "discord.js-selfbot-v13": "^3.7.1"
+  }
+}
