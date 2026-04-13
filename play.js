@@ -23,9 +23,13 @@ const STREAM_PRESETS = {
 	"auto": { width: 1920, height: 1080, frameRate: 30, bitrateVideo: 2500 },
 };
 
+const AUDIO_OPTS = {
+	bitrateAudio: 320,				// bitrate audio tinggi (kbps)
+	audioFilters: "volume=3.0", // naikkan volume 3x (bisa diubah 1.5–5.0)
+};
+
 const MOVIE_DIR = "movie";
 const LOADING_VID = "assets/loading.mp4";
-const BOOT_VID = "video.mp4";
 
 /**
  * Discord voice streaming bot with console controller.
@@ -112,7 +116,7 @@ class VoiceTrackerBot {
 		}
 
 		console.log("\n[START] Film tersedia:");
-		movies.forEach((m, i) => console.log(`  ${i + 1}. ${m}`));
+		movies.forEach((m, i) => console.log(`	${i + 1}. ${m}`));
 
 		const answer = await this.askQuestion("Pilih nomor film: ");
 		const idx = parseInt(answer.trim(), 10) - 1;
@@ -215,6 +219,8 @@ class VoiceTrackerBot {
 			encoder: Encoders.software({
 				x264: { preset: "veryfast", tune: "zerolatency" },
 			}),
+			bitrateAudio: AUDIO_OPTS.bitrateAudio,	 // ← tambah ini
+			audioFilters: AUDIO_OPTS.audioFilters,	 // ← tambah ini
 			customFfmpegFlags: [
 				"-threads",
 				"4",
@@ -304,15 +310,19 @@ class VoiceTrackerBot {
 		const userId = newState.id || oldState.id;
 		if (userId === this.client.user.id) return;
 
+		const member = newState.member || oldState.member;
+		const username =
+			member?.displayName || member?.user?.username || "Unknown user";
+
 		if (newState.channelId === this.voiceChannelId) {
 			this.userJoinTimes.set(userId, Date.now());
-			console.log("[TRACK] user joined");
+			console.log(`[TRACK] ${username} joined`);
 		}
 
 		if (oldState.channelId === this.voiceChannelId) {
 			const t = this.userJoinTimes.get(userId);
 			if (!t) return;
-			console.log(`[TRACK] user left after ${Date.now() - t}ms`);
+			console.log(`[TRACK] ${username} left after ${Date.now() - t}ms`);
 			this.userJoinTimes.delete(userId);
 		}
 	}
